@@ -3,7 +3,7 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 build_root=${QEMU_BUILD:-$repo/build/qemu}
-log="$build_root/console.log"
+log="${QEMU_LOG:-$build_root/console.log}"
 mkdir -p "$build_root"
 if [[ ! -s "$build_root/kernel-out/arch/x86/boot/bzImage" ]]; then
   echo 'Build the test kernel first: make qemu-kernel' >&2
@@ -21,4 +21,4 @@ if ! grep -q '^DUALSTEER_GUEST_PASS' "$log" || \
   echo "Guest did not pass; log: $log" >&2
   exit 1
 fi
-echo "Patched-kernel verifier and data-plane tests passed. Log: $log"
+echo "Patched-kernel guest tests passed. Log: $log"

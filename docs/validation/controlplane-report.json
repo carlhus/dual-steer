@@ -1,0 +1,480 @@
+{
+  "passed": true,
+  "kernel": "6.6.0-rc2-dualsteer-test",
+  "scheduler": "bpf_ds_wrr",
+  "interface": "research extension; not a standardized 3GPP SBI",
+  "map_access": "read-only observer; all policy/path writes originate from the PM-driven agent",
+  "manual_connection_identifiers_supplied": false,
+  "phases": [
+    {
+      "generation": 1,
+      "requested_weight_a": 70,
+      "smf": {
+        "id": "lab",
+        "dnn": "internet",
+        "legs": {
+          "A": {
+            "ifname": "leg-a",
+            "localAddress": "10.60.1.2"
+          },
+          "B": {
+            "ifname": "leg-b",
+            "localAddress": "10.60.2.2"
+          }
+        },
+        "flow": {
+          "destinationAddress": "10.60.1.1",
+          "destinationPort": 5001
+        },
+        "policy": {
+          "enabled": true,
+          "mode": "load-balance",
+          "weightA": 70,
+          "weightB": 30,
+          "rttDeltaUs": 1000
+        },
+        "generation": 1,
+        "appliedGeneration": 1,
+        "deleting": false
+      },
+      "agent": {
+        "id": "lab",
+        "generation": 1,
+        "deleting": false,
+        "bindings": [
+          {
+            "token": 1632774984,
+            "netnsInode": 4026532101,
+            "generation": 1,
+            "ready": true,
+            "paths": [
+              {
+                "localId": 0,
+                "remoteId": 0,
+                "access": 0
+              },
+              {
+                "localId": 1,
+                "remoteId": 2,
+                "access": 1
+              }
+            ]
+          }
+        ]
+      },
+      "bpf": {
+        "policy": {
+          "generation": 1,
+          "enabled": 1,
+          "mode": 1,
+          "weight_a": 70,
+          "weight_b": 30,
+          "rtt_delta_us": 1000
+        },
+        "paths": [
+          {
+            "localId": 0,
+            "remoteId": 0,
+            "generation": 1,
+            "access": 0
+          },
+          {
+            "localId": 1,
+            "remoteId": 2,
+            "generation": 1,
+            "access": 1
+          }
+        ]
+      },
+      "scheduler_stats": {
+        "generation": 1,
+        "mode": 1,
+        "selected_a": 18044,
+        "selected_b": 7733,
+        "fallback": 14
+      },
+      "scheduler_decision_delta": {
+        "selected_a": 13140,
+        "selected_b": 5631,
+        "fallback": 0
+      },
+      "selection_share_a": 0.7000159821000479,
+      "received_payload_bytes": 1225392128,
+      "mptcp": {
+        "state": "running",
+        "bytes": 1636401112,
+        "elapsed": 8.21094224,
+        "token": 1632774984,
+        "flags": 2,
+        "fallback": false,
+        "additional_subflows": 1,
+        "netnsInode": 4026532101,
+        "bytes_retrans": 0,
+        "bytes_sent": 1636401112,
+        "bytes_received": 0,
+        "bytes_acked": 1635090360
+      }
+    },
+    {
+      "generation": 2,
+      "requested_weight_a": 20,
+      "smf": {
+        "id": "lab",
+        "dnn": "internet",
+        "legs": {
+          "A": {
+            "ifname": "leg-a",
+            "localAddress": "10.60.1.2"
+          },
+          "B": {
+            "ifname": "leg-b",
+            "localAddress": "10.60.2.2"
+          }
+        },
+        "flow": {
+          "destinationAddress": "10.60.1.1",
+          "destinationPort": 5001
+        },
+        "policy": {
+          "enabled": true,
+          "mode": "load-balance",
+          "weightA": 20,
+          "weightB": 80,
+          "rttDeltaUs": 1000
+        },
+        "generation": 2,
+        "appliedGeneration": 2,
+        "deleting": false
+      },
+      "agent": {
+        "id": "lab",
+        "generation": 2,
+        "deleting": false,
+        "bindings": [
+          {
+            "token": 1632774984,
+            "netnsInode": 4026532101,
+            "generation": 2,
+            "ready": true,
+            "paths": [
+              {
+                "localId": 0,
+                "remoteId": 0,
+                "access": 0
+              },
+              {
+                "localId": 1,
+                "remoteId": 2,
+                "access": 1
+              }
+            ]
+          }
+        ]
+      },
+      "bpf": {
+        "policy": {
+          "generation": 2,
+          "enabled": 1,
+          "mode": 1,
+          "weight_a": 20,
+          "weight_b": 80,
+          "rtt_delta_us": 1000
+        },
+        "paths": [
+          {
+            "localId": 0,
+            "remoteId": 0,
+            "generation": 2,
+            "access": 0
+          },
+          {
+            "localId": 1,
+            "remoteId": 2,
+            "generation": 2,
+            "access": 1
+          }
+        ]
+      },
+      "scheduler_stats": {
+        "generation": 2,
+        "mode": 1,
+        "selected_a": 23455,
+        "selected_b": 28908,
+        "fallback": 14
+      },
+      "scheduler_decision_delta": {
+        "selected_a": 3824,
+        "selected_b": 15299,
+        "fallback": 0
+      },
+      "selection_share_a": 0.19996862416984781,
+      "received_payload_bytes": 1249116160,
+      "mptcp": {
+        "state": "running",
+        "bytes": 3330047960,
+        "elapsed": 16.419646639999996,
+        "token": 1632774984,
+        "flags": 2,
+        "fallback": false,
+        "additional_subflows": 1,
+        "netnsInode": 4026532101,
+        "bytes_retrans": 0,
+        "bytes_sent": 3330047960,
+        "bytes_received": 0,
+        "bytes_acked": 3328606136
+      }
+    }
+  ],
+  "control_requests": [
+    {
+      "component": "http://127.0.0.1:18082",
+      "method": "POST",
+      "path": "/research/dualsteer/v1/contexts",
+      "body": {
+        "id": "lab",
+        "dnn": "internet",
+        "legs": {
+          "A": {
+            "ifname": "leg-a",
+            "localAddress": "10.60.1.2"
+          },
+          "B": {
+            "ifname": "leg-b",
+            "localAddress": "10.60.2.2"
+          }
+        },
+        "flow": {
+          "destinationAddress": "10.60.1.1",
+          "destinationPort": 5001
+        }
+      },
+      "status": 201,
+      "response": {
+        "id": "lab",
+        "dnn": "internet",
+        "legs": {
+          "A": {
+            "ifname": "leg-a",
+            "localAddress": "10.60.1.2"
+          },
+          "B": {
+            "ifname": "leg-b",
+            "localAddress": "10.60.2.2"
+          }
+        },
+        "flow": {
+          "destinationAddress": "10.60.1.1",
+          "destinationPort": 5001
+        },
+        "policy": {
+          "enabled": true,
+          "mode": "load-balance",
+          "weightA": 70,
+          "weightB": 30,
+          "rttDeltaUs": 1000
+        },
+        "generation": 1,
+        "appliedGeneration": 1,
+        "deleting": false
+      }
+    },
+    {
+      "component": "http://127.0.0.1:18081",
+      "method": "PUT",
+      "path": "/research/dualsteer/v1/policies/internet",
+      "body": {
+        "enabled": true,
+        "mode": "load-balance",
+        "weightA": 20,
+        "weightB": 80,
+        "rttDeltaUs": 1000
+      },
+      "status": 200,
+      "response": {
+        "enabled": true,
+        "mode": "load-balance",
+        "weightA": 20,
+        "weightB": 80,
+        "rttDeltaUs": 1000
+      }
+    },
+    {
+      "component": "http://127.0.0.1:18082",
+      "method": "DELETE",
+      "path": "/research/dualsteer/v1/contexts/lab",
+      "body": null,
+      "status": 204,
+      "response": null
+    }
+  ],
+  "software_pins": {
+    "version": "v4.2.3",
+    "core": {
+      "commit": "3b34a08e93a9b334f0f4005d3a3a9f79b66d59b9",
+      "url": "https://github.com/free5gc/free5gc.git"
+    },
+    "pcf": {
+      "commit": "90d88f15fe18780bb6c4b2cf3bbd59d636dd130d",
+      "url": "https://github.com/free5gc/pcf.git"
+    },
+    "smf": {
+      "commit": "796a2de8cfedc208e6b709da9e8fe5a93026434e",
+      "url": "https://github.com/free5gc/smf.git"
+    }
+  },
+  "processes": {
+    "agent": {
+      "command": [
+        "ip",
+        "netns",
+        "exec",
+        "ds-ue",
+        "/work/build/dualsteer-agent",
+        "serve",
+        "--listen",
+        "unix:/run/dualsteer-agent.sock",
+        "--policy-map",
+        "id:1",
+        "--path-map",
+        "id:2"
+      ],
+      "pid": 97,
+      "exitCode": 0
+    },
+    "pcf": {
+      "command": [
+        "/work/build/pcf-research",
+        "--dualsteer-research",
+        "--dualsteer-config",
+        "/work/build/runtime-controlplane/pcf.json"
+      ],
+      "pid": 105,
+      "exitCode": 0
+    },
+    "smf": {
+      "command": [
+        "/work/build/smf-research",
+        "--dualsteer-research",
+        "--dualsteer-config",
+        "/work/build/runtime-controlplane/smf.json"
+      ],
+      "pid": 112,
+      "exitCode": 0
+    },
+    "receiver": {
+      "command": [
+        "ip",
+        "netns",
+        "exec",
+        "ds-peer",
+        "/usr/bin/python3",
+        "/work/scripts/traffic.py",
+        "receive",
+        "--seconds",
+        "190",
+        "--status",
+        "/work/build/runtime-controlplane/receiver.json"
+      ],
+      "pid": 119,
+      "exitCode": -15
+    },
+    "sender": {
+      "command": [
+        "ip",
+        "netns",
+        "exec",
+        "ds-ue",
+        "/usr/bin/python3",
+        "/work/scripts/traffic.py",
+        "send",
+        "--seconds",
+        "180",
+        "--status",
+        "/work/build/runtime-controlplane/sender.json"
+      ],
+      "pid": 120,
+      "exitCode": -15
+    }
+  },
+  "agent_ready_before_traffic": {
+    "ready": true,
+    "restartBehavior": "fresh-connections-only; startup refuses nonempty namespace maps",
+    "observedConnections": 0,
+    "contexts": []
+  },
+  "initial_pcf_policy": {
+    "enabled": true,
+    "mode": "load-balance",
+    "weightA": 70,
+    "weightB": 30,
+    "rttDeltaUs": 1000
+  },
+  "smf_context_before_traffic": {
+    "id": "lab",
+    "dnn": "internet",
+    "legs": {
+      "A": {
+        "ifname": "leg-a",
+        "localAddress": "10.60.1.2"
+      },
+      "B": {
+        "ifname": "leg-b",
+        "localAddress": "10.60.2.2"
+      }
+    },
+    "flow": {
+      "destinationAddress": "10.60.1.1",
+      "destinationPort": 5001
+    },
+    "policy": {
+      "enabled": true,
+      "mode": "load-balance",
+      "weightA": 70,
+      "weightB": 30,
+      "rttDeltaUs": 1000
+    },
+    "generation": 1,
+    "appliedGeneration": 1,
+    "deleting": false
+  },
+  "agent_pending_before_traffic": {
+    "id": "lab",
+    "generation": 1,
+    "deleting": false,
+    "bindings": []
+  },
+  "connection": {
+    "state": "running",
+    "bytes": 7372760,
+    "elapsed": 0.20356742999999966,
+    "token": 1632774984,
+    "flags": 2,
+    "fallback": false,
+    "additional_subflows": 1,
+    "netnsInode": 4026532101,
+    "bytes_retrans": 0,
+    "bytes_sent": 7372760,
+    "bytes_received": 0,
+    "bytes_acked": 4499144
+  },
+  "same_connection_verified": true,
+  "agent_after_pm_close": {
+    "id": "lab",
+    "generation": 2,
+    "deleting": false,
+    "bindings": []
+  },
+  "maps_after_pm_close": {
+    "counts": {
+      "policy": 0,
+      "paths": 0,
+      "stats": 0
+    }
+  },
+  "context_delete": {
+    "smf_status": 404,
+    "agent_status": 404
+  },
+  "controlplane_verified": true,
+  "clean_shutdown": true
+}

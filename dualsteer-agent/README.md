@@ -91,3 +91,66 @@ pin opening, ABI bytes, apply/update/status/delete, stale generations, and wrong
 map rejection; their maps and pins are removed after execution. Ordinary tests
 exercise transaction failure rollback with a fake `MapStore` and do not require
 root. These map tests are separate from MPTCP scheduler data-plane verification.
+
+## Automatic policy receiving and MPTCP binding
+
+Run in the UE socket's network namespace **before creating the MPTCP connection**:
+
+```sh
+dualsteer-agent serve --listen unix:/run/dualsteer-agent.sock \
+  --policy-map id:123 --path-map id:124
+```
+
+Map selectors may also be absolute pinned paths. The daemon holds the existing
+process-shared writer lock for its lifetime; all cooperating writers must honor
+that lock. It validates map ABI and refuses preexisting policy or path entries in
+the current namespace. It never sweeps other namespaces or adopts manually
+installed entries. Use dedicated fresh maps, or explicitly delete stale entries
+with the existing CLI after an unclean stop. A clean SIGINT/SIGTERM stop removes
+all bindings owned by this daemon.
+
+This is a research interface, not a 3GPP SBI:
+
+- `PUT /research/dualsteer/v1/contexts/{id}` accepts the shared controlplane
+  `Assignment` JSON: `id`, `dnn`, `legs.A/B.{ifname,localAddress}`,
+  `flow.{destinationAddress,destinationPort}`, `policy` and `generation`.
+  The SMF worker supplies it automatically. A `202` means accepted desired
+  state; it does not prove a matching connection or two active paths exist.
+- `GET /research/dualsteer/v1/status` exposes `ready`, `restartBehavior`,
+  `observedConnections`, and `contexts`.
+- `GET /research/dualsteer/v1/contexts/{id}` exposes `id`, desired `generation`,
+  `deleting`, and `bindings`. Each binding includes `token`, `netnsInode`, applied
+  `generation`, `ready`, `paths` (`localId`, `remoteId`, `access`: A=0/B=1), and any
+  `error`. Before traffic, `bindings` is an empty array.
+- `DELETE /research/dualsteer/v1/contexts/{id}` removes the policy first, then
+  paths. Cleanup failures remain pending and return `503`; retries are safe.
+
+The Unix socket is mode 0600. A literal loopback IP:port can be supplied instead
+for isolated testing; there is no public-network listener or authentication
+protocol. Context IDs, addresses, policy modes and weights are validated.
+Destination flow selectors must be unique. A context's flow, DNN and legs are
+immutable until deleted; policy generations increase monotonically, and exact
+same-generation retries are idempotent.
+
+The daemon joins the actual `mptcp_pm_events` generic-netlink multicast group
+before announcing readiness. It decodes binary kernel events directly, including
+native-endian token/family/ifindex and network-endian addresses/ports. An initial
+`ESTABLISHED` destination tuple selects the context. Each observed subflow is
+classified by its actual local address, checked against the configured
+interface's assigned addresses (and event ifindex when present). Kernel endpoint
+IDs are used verbatim, including zero; they are never inferred from ifindex.
+Events may precede policy delivery: the daemon retains them and reconciles when
+the assignment arrives. It waits for observed paths on both legs before installing
+policy, then advances policy on the **same token** when a newer assignment arrives.
+Subflow removal reconciles paths; connection close automatically removes policy
+and paths. An incomplete two-leg topology uses default scheduler fallback.
+
+Map failures keep observations and desired state, mark status not ready and retry
+every 250 ms. Kernel event loss (`ENOBUFS`, truncation, overrun or malformed relevant
+messages) terminates the daemon with cleanup because multicast events cannot be
+replayed. State is bounded to 1024 contexts, 4096 observed connections and 256
+subflows per connection; observation overflow also terminates rather than silently
+dropping state. Restart supports **fresh connections only**: there is no claim to
+discover connections that predate subscription. Restart the test connection after
+restarting the daemon. Verify actual BPF attachment and traffic independently;
+map contents alone are not proof of scheduler use.

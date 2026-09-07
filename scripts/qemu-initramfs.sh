@@ -79,7 +79,13 @@ if ! test -f /work/scripts/guest-verify.sh; then
   poweroff -f
 fi
 cd /work
-bash scripts/guest-verify.sh
+guest_script=scripts/guest-verify.sh
+for argument in $(cat /proc/cmdline); do
+  case "$argument" in
+    dualsteer.test=scripts/guest-controlplane.sh) guest_script=scripts/guest-controlplane.sh ;;
+  esac
+done
+bash "$guest_script"
 result=$?
 echo "DUALSTEER_GUEST_EXIT=$result"
 sync

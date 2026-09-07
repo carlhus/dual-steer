@@ -1,0 +1,297 @@
+diff --git a/cmd/main.go b/cmd/main.go
+index 0648bfc..06ccb9c 100644
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -22,6 +22,7 @@ import (
+ 
+ 	"github.com/urfave/cli/v2"
+ 
++	"github.com/free5gc/pcf/internal/dualsteer"
+ 	"github.com/free5gc/pcf/internal/logger"
+ 	"github.com/free5gc/pcf/pkg/factory"
+ 	"github.com/free5gc/pcf/pkg/service"
+@@ -44,6 +45,8 @@ func main() {
+ 	app.Usage = "5G Policy Control Function (PCF)"
+ 	app.Action = action
+ 	app.Flags = []cli.Flag{
++		&cli.BoolFlag{Name: "dualsteer-research", Usage: "Run the opt-in DualSteer research control API (without normal NF startup)"},
++		&cli.StringFlag{Name: "dualsteer-config", Usage: "Load DualSteer research JSON configuration from FILE"},
+ 		&cli.StringFlag{
+ 			Name:    "config",
+ 			Aliases: []string{"c"},
+@@ -61,6 +64,12 @@ func main() {
+ }
+ 
+ func action(cliCtx *cli.Context) error {
++	if cliCtx.Bool("dualsteer-research") {
++		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
++		defer stop()
++		return dualsteer.Run(ctx, cliCtx.String("dualsteer-config"))
++	}
++
+ 	tlsKeyLogPath, err := initLogFile(cliCtx.StringSlice("log"))
+ 	if err != nil {
+ 		return err
+diff --git a/go.mod b/go.mod
+index b61cc88..c772e8f 100644
+--- a/go.mod
++++ b/go.mod
+@@ -86,3 +86,7 @@ require (
+ 	google.golang.org/protobuf v1.36.1 // indirect
+ 	gopkg.in/yaml.v3 v3.0.1 // indirect
+ )
++
++require example.com/dual-steer/controlplane v0.0.0
++
++replace example.com/dual-steer/controlplane => ../../../../controlplane
+diff --git a/internal/dualsteer/policy.go b/internal/dualsteer/policy.go
+new file mode 100644
+index 0000000..0b19f2c
+--- /dev/null
++++ b/internal/dualsteer/policy.go
+@@ -0,0 +1,86 @@
++package dualsteer
++
++import (
++	"context"
++	"fmt"
++	"maps"
++	"net/http"
++	"sync"
++
++	cp "example.com/dual-steer/controlplane"
++)
++
++type Config struct {
++	Listen   string               `json:"listen"`
++	Policies map[string]cp.Policy `json:"policies"`
++}
++
++type Server struct {
++	mu       sync.RWMutex
++	policies map[string]cp.Policy
++}
++
++func New(policies map[string]cp.Policy) (*Server, error) {
++	for name, policy := range policies {
++		if err := cp.ValidateName(name); err != nil {
++			return nil, err
++		}
++		if err := policy.Validate(); err != nil {
++			return nil, fmt.Errorf("policy %s: %w", name, err)
++		}
++	}
++	return &Server{policies: maps.Clone(policies)}, nil
++}
++
++func (s *Server) Handler() http.Handler {
++	mux := http.NewServeMux()
++	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
++		reply(w, http.StatusOK, map[string]string{"mode": "dualsteer-research", "nf": "pcf"})
++	})
++	mux.HandleFunc("GET "+prefix+"/policies/{dnn}", func(w http.ResponseWriter, r *http.Request) {
++		s.mu.RLock()
++		policy, ok := s.policies[r.PathValue("dnn")]
++		s.mu.RUnlock()
++		if !ok {
++			fail(w, http.StatusNotFound, fmt.Errorf("DNN policy not found"))
++			return
++		}
++		reply(w, http.StatusOK, policy)
++	})
++	mux.HandleFunc("PUT "+prefix+"/policies/{dnn}", func(w http.ResponseWriter, r *http.Request) {
++		name := r.PathValue("dnn")
++		if err := cp.ValidateName(name); err != nil {
++			fail(w, http.StatusBadRequest, err)
++			return
++		}
++		var policy cp.Policy
++		if err := decode(http.MaxBytesReader(w, r.Body, 65536), &policy); err != nil {
++			fail(w, http.StatusBadRequest, err)
++			return
++		}
++		if err := policy.Validate(); err != nil {
++			fail(w, http.StatusBadRequest, err)
++			return
++		}
++		s.mu.Lock()
++		if s.policies == nil {
++			s.policies = make(map[string]cp.Policy)
++		}
++		s.policies[name] = policy
++		s.mu.Unlock()
++		reply(w, http.StatusOK, policy)
++	})
++	return mux
++}
++
++func Run(ctx context.Context, path string) error {
++	var config Config
++	if err := readConfig(path, &config); err != nil {
++		return err
++	}
++	server, err := New(config.Policies)
++	if err != nil {
++		return err
++	}
++	return serve(ctx, config.Listen, server.Handler())
++}
+diff --git a/internal/dualsteer/policy_test.go b/internal/dualsteer/policy_test.go
+new file mode 100644
+index 0000000..c138f74
+--- /dev/null
++++ b/internal/dualsteer/policy_test.go
+@@ -0,0 +1,58 @@
++package dualsteer
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	cp "example.com/dual-steer/controlplane"
++)
++
++func TestPolicyUpdateAndRejectedUpdatePreservesPolicy(t *testing.T) {
++	initial := cp.Policy{Enabled: true, Mode: "load-balance", WeightA: 70, WeightB: 30}
++	server, err := New(map[string]cp.Policy{"internet": initial})
++	if err != nil {
++		t.Fatal(err)
++	}
++	handler := server.Handler()
++	request := func(method, path, body string) *httptest.ResponseRecorder {
++		t.Helper()
++		response := httptest.NewRecorder()
++		handler.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
++		return response
++	}
++	path := prefix + "/policies/internet"
++	updated := `{"enabled":true,"mode":"load-balance","weightA":20,"weightB":80,"rttDeltaUs":1000}`
++	if response := request(http.MethodPut, path, updated); response.Code != http.StatusOK {
++		t.Fatal(response.Body.String())
++	}
++	for _, body := range []string{
++		`{"mode":"load-balance","weightA":20,"weightB":70}`,
++		`{"mode":"unsupported","weightA":20,"weightB":80}`,
++		`{"mode":"load-balance","weightA":20,"weightB":80,"unknown":true}`,
++		updated + ` {}`,
++	} {
++		if response := request(http.MethodPut, path, body); response.Code != http.StatusBadRequest {
++			t.Errorf("invalid policy accepted: %s", body)
++		}
++	}
++	response := request(http.MethodGet, path, "")
++	var actual cp.Policy
++	if err := json.Unmarshal(response.Body.Bytes(), &actual); err != nil {
++		t.Fatal(err)
++	}
++	if actual.WeightA != 20 || actual.WeightB != 80 || actual.RTTDeltaUS != 1000 {
++		t.Fatalf("rejected update altered policy: %+v", actual)
++	}
++	if response := request(http.MethodGet, prefix+"/policies/missing", ""); response.Code != http.StatusNotFound {
++		t.Fatal(response.Code)
++	}
++}
++
++func TestConfigRejectsInvalidInitialPolicy(t *testing.T) {
++	if _, err := New(map[string]cp.Policy{"internet": {Mode: "load-balance", WeightA: 100, WeightB: 100}}); err == nil {
++		t.Fatal("invalid initial policy accepted")
++	}
++}
+diff --git a/internal/dualsteer/runtime.go b/internal/dualsteer/runtime.go
+new file mode 100644
+index 0000000..b70caf0
+--- /dev/null
++++ b/internal/dualsteer/runtime.go
+@@ -0,0 +1,89 @@
++// Package dualsteer provides the opt-in, non-3GPP research control interface.
++package dualsteer
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"os"
++	"time"
++)
++
++const prefix = "/research/dualsteer/v1"
++
++func decode(r io.Reader, target any) error {
++	decoder := json.NewDecoder(io.LimitReader(r, 65537))
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(target); err != nil {
++		return err
++	}
++	var extra any
++	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
++		return fmt.Errorf("expected one JSON object")
++	}
++	return nil
++}
++
++func readConfig(path string, target any) error {
++	if path == "" {
++		return fmt.Errorf("--dualsteer-config is required in research mode")
++	}
++	file, err := os.Open(path)
++	if err != nil {
++		return err
++	}
++	defer file.Close()
++	return decode(file, target)
++}
++
++func reply(w http.ResponseWriter, status int, value any) {
++	w.Header().Set("Content-Type", "application/json")
++	w.WriteHeader(status)
++	_ = json.NewEncoder(w).Encode(value)
++}
++
++func fail(w http.ResponseWriter, status int, err error) {
++	reply(w, status, map[string]string{"error": err.Error()})
++}
++
++func serve(ctx context.Context, address string, handler http.Handler) error {
++	host, _, err := net.SplitHostPort(address)
++	if err != nil {
++		return err
++	}
++	ip := net.ParseIP(host)
++	if ip == nil || !ip.IsLoopback() {
++		return fmt.Errorf("research listen address must use a loopback IP")
++	}
++	listener, err := net.Listen("tcp", address)
++	if err != nil {
++		return err
++	}
++	server := &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
++	done := make(chan struct{})
++	stopped := make(chan struct{})
++	go func() {
++		defer close(stopped)
++		select {
++		case <-ctx.Done():
++			shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++			defer cancel()
++			if err := server.Shutdown(shutdown); err != nil {
++				_ = server.Close()
++			}
++		case <-done:
++		}
++	}()
++	fmt.Fprintf(os.Stderr, "DualSteer research API listening on %s; normal NF registration and session procedures are disabled\n", listener.Addr())
++	err = server.Serve(listener)
++	close(done)
++	<-stopped
++	if errors.Is(err, http.ErrServerClosed) {
++		return nil
++	}
++	return err
++}

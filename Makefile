@@ -25,6 +25,7 @@ test-c: $(BUILD)/select_test
 	./$(BUILD)/select_test
 
 test-go:
+	cd controlplane && go test ./... && go vet ./...
 	cd dualsteer-agent && go test ./... && go vet ./...
 
 agent: | $(BUILD)
@@ -59,3 +60,18 @@ qemu-test: agent bpf qemu-initramfs
 
 clean:
 	rm -rf $(BUILD)
+
+.PHONY: free5gc-prepare controlplane-build controlplane-test qemu-controlplane-test
+free5gc-prepare:
+	python3 scripts/free5gc-research.py prepare
+
+controlplane-build: agent
+	cd build/free5gc-v4.2.3/NFs/pcf && CGO_ENABLED=0 go build -o $(CURDIR)/build/pcf-research ./cmd
+	cd build/free5gc-v4.2.3/NFs/smf && CGO_ENABLED=0 go build -o $(CURDIR)/build/smf-research ./cmd
+
+controlplane-test: test-go
+	cd build/free5gc-v4.2.3/NFs/pcf && go test ./internal/dualsteer ./cmd && go vet ./internal/dualsteer ./cmd
+	cd build/free5gc-v4.2.3/NFs/smf && go test ./internal/dualsteer ./cmd && go vet ./internal/dualsteer ./cmd
+
+qemu-controlplane-test: controlplane-build bpf qemu-initramfs
+	GUEST_TEST_SCRIPT=scripts/guest-controlplane.sh QEMU_LOG=$(CURDIR)/build/qemu/controlplane-console.log QEMU_TIMEOUT=480 bash scripts/qemu-test.sh

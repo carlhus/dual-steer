@@ -1,0 +1,6 @@
+{
+  "version": "v4.2.3",
+  "core": {"commit": "3b34a08e93a9b334f0f4005d3a3a9f79b66d59b9", "url": "https://github.com/free5gc/free5gc.git"},
+  "pcf": {"commit": "90d88f15fe18780bb6c4b2cf3bbd59d636dd130d", "url": "https://github.com/free5gc/pcf.git"},
+  "smf": {"commit": "796a2de8cfedc208e6b709da9e8fe5a93026434e", "url": "https://github.com/free5gc/smf.git"}
+}

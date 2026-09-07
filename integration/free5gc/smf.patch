@@ -1,0 +1,674 @@
+diff --git a/cmd/main.go b/cmd/main.go
+index 757c12b..14d2d3d 100644
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -12,6 +12,7 @@ import (
+ 
+ 	"github.com/urfave/cli/v2"
+ 
++	"github.com/free5gc/smf/internal/dualsteer"
+ 	"github.com/free5gc/smf/internal/logger"
+ 	"github.com/free5gc/smf/pkg/factory"
+ 	"github.com/free5gc/smf/pkg/service"
+@@ -35,6 +36,8 @@ func main() {
+ 	app.Usage = "5G Session Management Function (SMF)"
+ 	app.Action = action
+ 	app.Flags = []cli.Flag{
++		&cli.BoolFlag{Name: "dualsteer-research", Usage: "Run the opt-in DualSteer research control API (without normal NF startup)"},
++		&cli.StringFlag{Name: "dualsteer-config", Usage: "Load DualSteer research JSON configuration from FILE"},
+ 		&cli.StringFlag{
+ 			Name:    "config",
+ 			Aliases: []string{"c"},
+@@ -59,6 +62,12 @@ func main() {
+ }
+ 
+ func action(cliCtx *cli.Context) error {
++	if cliCtx.Bool("dualsteer-research") {
++		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
++		defer stop()
++		return dualsteer.Run(ctx, cliCtx.String("dualsteer-config"))
++	}
++
+ 	tlsKeyLogPath, err := initLogFile(cliCtx.StringSlice("log"))
+ 	if err != nil {
+ 		return err
+diff --git a/go.mod b/go.mod
+index a5bcf79..e7d3c8f 100644
+--- a/go.mod
++++ b/go.mod
+@@ -81,3 +81,7 @@ require (
+ 	google.golang.org/protobuf v1.36.1 // indirect
+ 	gopkg.in/yaml.v3 v3.0.1 // indirect
+ )
++
++require example.com/dual-steer/controlplane v0.0.0
++
++replace example.com/dual-steer/controlplane => ../../../../controlplane
+diff --git a/internal/dualsteer/context.go b/internal/dualsteer/context.go
+new file mode 100644
+index 0000000..6f3ab4f
+--- /dev/null
++++ b/internal/dualsteer/context.go
+@@ -0,0 +1,301 @@
++package dualsteer
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"math"
++	"net"
++	"net/http"
++	"net/url"
++	"path/filepath"
++	"strings"
++	"sync"
++	"time"
++
++	cp "example.com/dual-steer/controlplane"
++)
++
++type Config struct {
++	Listen      string `json:"listen"`
++	PCFURL      string `json:"pcf_url"`
++	AgentSocket string `json:"agent_socket"`
++	PollMS      int    `json:"poll_ms"`
++}
++
++// State reports delivery to the agent, not successful creation of an MPTCP flow.
++// Contexts are in memory and belong to this research-mode SMF process lifetime.
++type State struct {
++	cp.Assignment
++	AppliedGeneration uint32 `json:"appliedGeneration"`
++	Deleting          bool   `json:"deleting"`
++	LastError         string `json:"lastError,omitempty"`
++	lastDelivered     time.Time
++}
++
++type Server struct {
++	mu          sync.Mutex
++	contexts    map[string]*State
++	generation  uint32
++	pcfURL      string
++	pcfClient   *http.Client
++	agentClient *http.Client
++}
++
++func New(pcfURL string, pcfClient, agentClient *http.Client) *Server {
++	return &Server{contexts: make(map[string]*State), pcfURL: strings.TrimRight(pcfURL, "/"), pcfClient: pcfClient, agentClient: agentClient}
++}
++
++func (s *Server) policy(ctx context.Context, dnn string) (cp.Policy, error) {
++	var policy cp.Policy
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.pcfURL+prefix+"/policies/"+url.PathEscape(dnn), nil)
++	if err != nil {
++		return policy, err
++	}
++	response, err := s.pcfClient.Do(req)
++	if err != nil {
++		return policy, err
++	}
++	defer response.Body.Close()
++	if response.StatusCode != http.StatusOK {
++		return policy, fmt.Errorf("PCF returned HTTP %d", response.StatusCode)
++	}
++	if err := decode(response.Body, &policy); err != nil {
++		return policy, err
++	}
++	return policy, policy.Validate()
++}
++
++// deliver is serialized with context lifecycle changes so an old PUT cannot
++// overtake DELETE or a new generation. Retries retain the same generation.
++func (s *Server) deliver(ctx context.Context, state *State) error {
++	method := http.MethodPut
++	var body io.Reader
++	if state.Deleting {
++		method = http.MethodDelete
++	} else {
++		data, err := json.Marshal(state.Assignment)
++		if err != nil {
++			return err
++		}
++		body = bytes.NewReader(data)
++	}
++	req, err := http.NewRequestWithContext(ctx, method, "http://agent"+prefix+"/contexts/"+url.PathEscape(state.ID), body)
++	if err != nil {
++		return err
++	}
++	req.Header.Set("Content-Type", "application/json")
++	response, err := s.agentClient.Do(req)
++	if err != nil {
++		return err
++	}
++	defer response.Body.Close()
++	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 65536))
++	if response.StatusCode/100 != 2 && !(state.Deleting && response.StatusCode == http.StatusNotFound) {
++		return fmt.Errorf("agent returned HTTP %d", response.StatusCode)
++	}
++	if state.Deleting {
++		delete(s.contexts, state.ID)
++	} else {
++		state.AppliedGeneration = state.Generation
++		state.lastDelivered = time.Now()
++	}
++	state.LastError = ""
++	return nil
++}
++
++func (s *Server) nextGeneration() (uint32, error) {
++	if s.generation == math.MaxUint32 {
++		return 0, fmt.Errorf("generation space exhausted")
++	}
++	s.generation++
++	return s.generation, nil
++}
++
++func (s *Server) Handler() http.Handler {
++	mux := http.NewServeMux()
++	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
++		reply(w, http.StatusOK, map[string]string{"mode": "dualsteer-research", "nf": "smf"})
++	})
++	mux.HandleFunc("POST "+prefix+"/contexts", s.create)
++	mux.HandleFunc("GET "+prefix+"/contexts/{id}", s.get)
++	mux.HandleFunc("DELETE "+prefix+"/contexts/{id}", s.remove)
++	return mux
++}
++
++func (s *Server) create(w http.ResponseWriter, r *http.Request) {
++	var spec cp.ContextSpec
++	if err := decode(http.MaxBytesReader(w, r.Body, 65536), &spec); err != nil {
++		fail(w, http.StatusBadRequest, err)
++		return
++	}
++	if err := spec.Validate(); err != nil {
++		fail(w, http.StatusBadRequest, err)
++		return
++	}
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if state, ok := s.contexts[spec.ID]; ok {
++		if state.ContextSpec != spec || state.Deleting {
++			fail(w, http.StatusConflict, fmt.Errorf("context already exists with different settings or is deleting"))
++			return
++		}
++		reply(w, http.StatusOK, state)
++		return
++	}
++	policy, err := s.policy(r.Context(), spec.DNN)
++	if err != nil {
++		fail(w, http.StatusBadGateway, err)
++		return
++	}
++	generation, err := s.nextGeneration()
++	if err != nil {
++		fail(w, http.StatusConflict, err)
++		return
++	}
++	state := &State{Assignment: cp.Assignment{ContextSpec: spec, Policy: policy, Generation: generation}}
++	s.contexts[spec.ID] = state
++	status := http.StatusCreated
++	if err := s.deliver(r.Context(), state); err != nil {
++		state.LastError = err.Error()
++		status = http.StatusAccepted
++	}
++	reply(w, status, state)
++}
++
++func (s *Server) get(w http.ResponseWriter, r *http.Request) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	state, ok := s.contexts[r.PathValue("id")]
++	if !ok {
++		fail(w, http.StatusNotFound, fmt.Errorf("context not found"))
++		return
++	}
++	reply(w, http.StatusOK, state)
++}
++
++func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	state, ok := s.contexts[r.PathValue("id")]
++	if !ok {
++		w.WriteHeader(http.StatusNoContent)
++		return
++	}
++	state.Deleting = true
++	if err := s.deliver(r.Context(), state); err != nil {
++		state.LastError = err.Error()
++		reply(w, http.StatusAccepted, state)
++		return
++	}
++	w.WriteHeader(http.StatusNoContent)
++}
++
++// Reconcile automatically consumes desired PCF policy and retries agent writes.
++func (s *Server) Reconcile(ctx context.Context) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	for _, state := range s.contexts {
++		if !state.Deleting {
++			policy, err := s.policy(ctx, state.DNN)
++			if err != nil {
++				state.LastError = err.Error()
++				// A PCF outage must not prevent delivery of an already accepted
++				// desired assignment; retry that generation without changing it.
++				if state.AppliedGeneration != state.Generation || time.Since(state.lastDelivered) >= 2*time.Second {
++					if deliveryErr := s.deliver(ctx, state); deliveryErr != nil {
++						state.LastError = deliveryErr.Error()
++					}
++				}
++				continue
++			}
++			if policy != state.Policy {
++				generation, err := s.nextGeneration()
++				if err != nil {
++					state.LastError = err.Error()
++					continue
++				}
++				state.Policy = policy
++				state.Generation = generation
++			}
++			if state.AppliedGeneration == state.Generation && time.Since(state.lastDelivered) < 2*time.Second {
++				state.LastError = ""
++				continue
++			}
++		}
++		if err := s.deliver(ctx, state); err != nil {
++			state.LastError = err.Error()
++		}
++	}
++}
++
++// Release removes known contexts during orderly shutdown. It uses the caller's
++// independent deadline because the polling context has already been canceled.
++func (s *Server) Release(ctx context.Context) error {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	var failures []error
++	for _, state := range s.contexts {
++		state.Deleting = true
++		if err := s.deliver(ctx, state); err != nil {
++			state.LastError = err.Error()
++			failures = append(failures, fmt.Errorf("release context %s: %w", state.ID, err))
++		}
++	}
++	return errors.Join(failures...)
++}
++
++func (s *Server) Poll(ctx context.Context, interval time.Duration) {
++	ticks := time.Tick(interval)
++	for {
++		select {
++		case <-ctx.Done():
++			return
++		case <-ticks:
++			s.Reconcile(ctx)
++		}
++	}
++}
++
++func Run(ctx context.Context, path string) error {
++	var config Config
++	if err := readConfig(path, &config); err != nil {
++		return err
++	}
++	pcfURL, err := url.Parse(config.PCFURL)
++	if err != nil || pcfURL.Scheme != "http" || pcfURL.User != nil || pcfURL.RawQuery != "" || pcfURL.Fragment != "" || (pcfURL.Path != "" && pcfURL.Path != "/") {
++		return fmt.Errorf("pcf_url must be a loopback HTTP origin")
++	}
++	ip := net.ParseIP(pcfURL.Hostname())
++	if ip == nil || !ip.IsLoopback() {
++		return fmt.Errorf("pcf_url must use a loopback IP")
++	}
++	if !filepath.IsAbs(config.AgentSocket) {
++		return fmt.Errorf("agent_socket must be an absolute Unix socket path")
++	}
++	if config.PollMS == 0 {
++		config.PollMS = 200
++	}
++	if config.PollMS < 10 || config.PollMS > 60000 {
++		return fmt.Errorf("poll_ms must be in 10..60000")
++	}
++	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
++		return (&net.Dialer{}).DialContext(ctx, "unix", config.AgentSocket)
++	}}
++	defer transport.CloseIdleConnections()
++	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
++	server := New(config.PCFURL, &http.Client{Timeout: time.Second, CheckRedirect: noRedirect}, &http.Client{Transport: transport, Timeout: time.Second, CheckRedirect: noRedirect})
++	runCtx, cancel := context.WithCancel(ctx)
++	defer cancel()
++	var workers sync.WaitGroup
++	workers.Go(func() { server.Poll(runCtx, time.Duration(config.PollMS)*time.Millisecond) })
++	err = serve(runCtx, config.Listen, server.Handler())
++	cancel()
++	workers.Wait()
++	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer releaseCancel()
++	return errors.Join(err, server.Release(releaseCtx))
++}
+diff --git a/internal/dualsteer/context_test.go b/internal/dualsteer/context_test.go
+new file mode 100644
+index 0000000..ba7e3d7
+--- /dev/null
++++ b/internal/dualsteer/context_test.go
+@@ -0,0 +1,220 @@
++package dualsteer
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"slices"
++	"sync"
++	"testing"
++	"time"
++
++	cp "example.com/dual-steer/controlplane"
++)
++
++func TestAutomaticPolicyAndLifecycleRetry(t *testing.T) {
++	var mu sync.Mutex
++	policy := cp.Policy{Enabled: true, Mode: "load-balance", WeightA: 70, WeightB: 30}
++	pcfFail, agentFail := false, true
++	var delivered []cp.Assignment
++	deletes := 0
++	pcf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		defer mu.Unlock()
++		if pcfFail {
++			w.WriteHeader(http.StatusServiceUnavailable)
++			return
++		}
++		if r.URL.Path != prefix+"/policies/internet" {
++			t.Errorf("PCF path: %s", r.URL.Path)
++		}
++		_ = json.NewEncoder(w).Encode(policy)
++	}))
++	defer pcf.Close()
++	// Exercise actual HTTP over a Unix socket, including transient failures.
++	socket := filepath.Join(t.TempDir(), "agent.sock")
++	listener, err := net.Listen("unix", socket)
++	if err != nil {
++		t.Fatal(err)
++	}
++	agent := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		defer mu.Unlock()
++		if agentFail {
++			w.WriteHeader(http.StatusServiceUnavailable)
++			return
++		}
++		if r.Method == http.MethodDelete {
++			deletes++
++			w.WriteHeader(http.StatusNoContent)
++			return
++		}
++		var assignment cp.Assignment
++		if err := json.NewDecoder(r.Body).Decode(&assignment); err != nil {
++			t.Error(err)
++		}
++		delivered = append(delivered, assignment)
++		w.WriteHeader(http.StatusAccepted)
++	})}
++	go func() { _ = agent.Serve(listener) }()
++	defer agent.Close()
++	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
++		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
++	}}
++	defer transport.CloseIdleConnections()
++	server := New(pcf.URL, pcf.Client(), &http.Client{Transport: transport, Timeout: time.Second})
++	handler := server.Handler()
++	request := func(method, path string, body any) *httptest.ResponseRecorder {
++		t.Helper()
++		data, err := json.Marshal(body)
++		if err != nil {
++			t.Fatal(err)
++		}
++		response := httptest.NewRecorder()
++		req := httptest.NewRequest(method, path, bytes.NewReader(data)).WithContext(t.Context())
++		handler.ServeHTTP(response, req)
++		return response
++	}
++	spec := cp.ContextSpec{ID: "session-1", DNN: "internet", Legs: cp.Legs{A: cp.Leg{IfName: "legA", LocalAddress: "10.1.0.2"}, B: cp.Leg{IfName: "legB", LocalAddress: "10.2.0.2"}}, Flow: cp.Flow{DestinationAddress: "10.3.0.2", DestinationPort: 5201}}
++	path := prefix + "/contexts/" + spec.ID
++	readState := func() State {
++		t.Helper()
++		response := request(http.MethodGet, path, nil)
++		var state State
++		if err := json.Unmarshal(response.Body.Bytes(), &state); err != nil {
++			t.Fatal(err)
++		}
++		return state
++	}
++	if response := request(http.MethodPost, prefix+"/contexts", spec); response.Code != http.StatusAccepted {
++		t.Fatal(response.Code, response.Body.String())
++	}
++	initial := readState()
++	if initial.Generation != 1 || initial.AppliedGeneration != 0 || initial.LastError == "" {
++		t.Fatalf("bad pending state: %+v", initial)
++	}
++	if response := request(http.MethodPost, prefix+"/contexts", spec); response.Code != http.StatusOK {
++		t.Fatal("nonidempotent create", response.Code)
++	}
++	conflict := spec
++	conflict.Flow.DestinationPort++
++	if response := request(http.MethodPost, prefix+"/contexts", conflict); response.Code != http.StatusConflict {
++		t.Fatal("conflicting spec accepted")
++	}
++	mu.Lock()
++	agentFail = false
++	pcfFail = true
++	mu.Unlock()
++	ctx, cancel := context.WithCancel(t.Context())
++	done := make(chan struct{})
++	go func() { defer close(done); server.Poll(ctx, 10*time.Millisecond) }()
++	defer func() { cancel(); <-done }()
++	await := func(check func() bool) {
++		t.Helper()
++		deadline := time.After(3 * time.Second)
++		for {
++			if check() {
++				return
++			}
++			select {
++			case <-deadline:
++				t.Fatal("automatic reconciliation timed out")
++			case <-time.After(10 * time.Millisecond):
++			}
++		}
++	}
++	await(func() bool { return readState().AppliedGeneration == initial.Generation })
++	mu.Lock()
++	firstDeliveries := slices.Clone(delivered)
++	pcfFail = false
++	policy.WeightA = 20
++	policy.WeightB = 80
++	mu.Unlock()
++	if len(firstDeliveries) != 1 || firstDeliveries[0].Generation != initial.Generation {
++		t.Fatalf("retry changed generation or duplicated writes: %+v", firstDeliveries)
++	}
++	await(func() bool {
++		state := readState()
++		return state.Policy.WeightA == 20 && state.Generation > initial.Generation && state.AppliedGeneration == state.Generation
++	})
++	updated := readState()
++	// Failed deletion remains visible and is retried automatically.
++	mu.Lock()
++	agentFail = true
++	mu.Unlock()
++	if response := request(http.MethodDelete, path, nil); response.Code != http.StatusAccepted {
++		t.Fatal(response.Code, response.Body.String())
++	}
++	if !readState().Deleting {
++		t.Fatal("failed deletion lost its tombstone")
++	}
++	if response := request(http.MethodPost, prefix+"/contexts", spec); response.Code != http.StatusConflict {
++		t.Fatal("created over deleting context")
++	}
++	mu.Lock()
++	agentFail = false
++	mu.Unlock()
++	await(func() bool { return request(http.MethodGet, path, nil).Code == http.StatusNotFound })
++	mu.Lock()
++	deleteCount := deletes
++	mu.Unlock()
++	if deleteCount != 1 {
++		t.Fatalf("deletions: %d", deleteCount)
++	}
++	if response := request(http.MethodDelete, path, nil); response.Code != http.StatusNoContent {
++		t.Fatal("delete not idempotent")
++	}
++	if response := request(http.MethodPost, prefix+"/contexts", spec); response.Code != http.StatusCreated {
++		t.Fatal(response.Code, response.Body.String())
++	}
++	if readState().Generation <= updated.Generation {
++		t.Fatal("generation reused after delete/recreate")
++	}
++	cancel()
++	<-done
++	// Periodic refresh restores an agent's lost desired state at the same generation.
++	mu.Lock()
++	beforeRefresh := len(delivered)
++	mu.Unlock()
++	server.mu.Lock()
++	server.contexts[spec.ID].lastDelivered = time.Time{}
++	server.mu.Unlock()
++	server.Reconcile(t.Context())
++	mu.Lock()
++	refreshed := slices.Clone(delivered)
++	agentFail = true
++	mu.Unlock()
++	if len(refreshed) != beforeRefresh+1 || refreshed[len(refreshed)-1].Generation != readState().Generation {
++		t.Fatal("idempotent refresh missing or changed generation")
++	}
++	if err := server.Release(t.Context()); err == nil {
++		t.Fatal("shutdown release failure not reported")
++	}
++	if !readState().Deleting {
++		t.Fatal("shutdown failure lost deleting context")
++	}
++	mu.Lock()
++	agentFail = false
++	mu.Unlock()
++	if err := server.Release(t.Context()); err != nil {
++		t.Fatal(err)
++	}
++	if response := request(http.MethodGet, path, nil); response.Code != http.StatusNotFound {
++		t.Fatal("shutdown failed to remove context")
++	}
++}
++
++func TestInvalidContextDoesNotContactDependencies(t *testing.T) {
++	server := New("http://127.0.0.1:1", &http.Client{}, &http.Client{})
++	for _, body := range []string{`{}`, `{"unknown":true}`, `{} {}`} {
++		response := httptest.NewRecorder()
++		server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, prefix+"/contexts", bytes.NewBufferString(body)))
++		if response.Code != http.StatusBadRequest {
++			t.Errorf("status %d for %s", response.Code, body)
++		}
++	}
++}
+diff --git a/internal/dualsteer/runtime.go b/internal/dualsteer/runtime.go
+new file mode 100644
+index 0000000..b70caf0
+--- /dev/null
++++ b/internal/dualsteer/runtime.go
+@@ -0,0 +1,89 @@
++// Package dualsteer provides the opt-in, non-3GPP research control interface.
++package dualsteer
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"os"
++	"time"
++)
++
++const prefix = "/research/dualsteer/v1"
++
++func decode(r io.Reader, target any) error {
++	decoder := json.NewDecoder(io.LimitReader(r, 65537))
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(target); err != nil {
++		return err
++	}
++	var extra any
++	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
++		return fmt.Errorf("expected one JSON object")
++	}
++	return nil
++}
++
++func readConfig(path string, target any) error {
++	if path == "" {
++		return fmt.Errorf("--dualsteer-config is required in research mode")
++	}
++	file, err := os.Open(path)
++	if err != nil {
++		return err
++	}
++	defer file.Close()
++	return decode(file, target)
++}
++
++func reply(w http.ResponseWriter, status int, value any) {
++	w.Header().Set("Content-Type", "application/json")
++	w.WriteHeader(status)
++	_ = json.NewEncoder(w).Encode(value)
++}
++
++func fail(w http.ResponseWriter, status int, err error) {
++	reply(w, status, map[string]string{"error": err.Error()})
++}
++
++func serve(ctx context.Context, address string, handler http.Handler) error {
++	host, _, err := net.SplitHostPort(address)
++	if err != nil {
++		return err
++	}
++	ip := net.ParseIP(host)
++	if ip == nil || !ip.IsLoopback() {
++		return fmt.Errorf("research listen address must use a loopback IP")
++	}
++	listener, err := net.Listen("tcp", address)
++	if err != nil {
++		return err
++	}
++	server := &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
++	done := make(chan struct{})
++	stopped := make(chan struct{})
++	go func() {
++		defer close(stopped)
++		select {
++		case <-ctx.Done():
++			shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++			defer cancel()
++			if err := server.Shutdown(shutdown); err != nil {
++				_ = server.Close()
++			}
++		case <-done:
++		}
++	}()
++	fmt.Fprintf(os.Stderr, "DualSteer research API listening on %s; normal NF registration and session procedures are disabled\n", listener.Addr())
++	err = server.Serve(listener)
++	close(done)
++	<-stopped
++	if errors.Is(err, http.ErrServerClosed) {
++		return nil
++	}
++	return err
++}

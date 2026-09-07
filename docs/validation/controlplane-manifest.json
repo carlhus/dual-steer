@@ -1,0 +1,32 @@
+{
+  "recorded_at": "2026-09-07T09:40:43.468293+00:00",
+  "kernel": "6.6.0-rc2-dualsteer-test",
+  "kernel_source_commit": "48826ae77cc9a10907e990f1077caedc90ea4cd3",
+  "software_pins": {
+    "version": "v4.2.3",
+    "core": {
+      "commit": "3b34a08e93a9b334f0f4005d3a3a9f79b66d59b9",
+      "url": "https://github.com/free5gc/free5gc.git"
+    },
+    "pcf": {
+      "commit": "90d88f15fe18780bb6c4b2cf3bbd59d636dd130d",
+      "url": "https://github.com/free5gc/pcf.git"
+    },
+    "smf": {
+      "commit": "796a2de8cfedc208e6b709da9e8fe5a93026434e",
+      "url": "https://github.com/free5gc/smf.git"
+    }
+  },
+  "sha256": {
+    "build/dualsteer.bpf.o": "b37aaeb49b4ce0b67324dcd92e7c42d1231a1e8036a44c9f120d6a0849ea2115",
+    "build/dualsteer-agent": "4b93abd2e2bc53aad6e158191554879661ca5a84d4075dc2f94d6be705d6ada2",
+    "build/pcf-research": "274946fff76e0ecdcaeb6ec8edec9c82800bc31bf47e1a135d4f38265c1c09b6",
+    "build/smf-research": "6ad1d58b4e50daa7c5170f8a0e7b7bf14859ae5b85b33a38163051da3d6ef6cd",
+    "controlplane/protocol.go": "354f809f4d513a82c785862c11b0d1952a8a3e2ae3939d05867cb13cdb5788e9",
+    "scripts/verify-controlplane.py": "85cb49f8d613cc504dd4e5c563bbe6824cb667fa113c3c2044dd7d2e447a31cc",
+    "scripts/guest-controlplane.sh": "f09ddf0eafc21c37f42d960d693bd4d11780f70742583dcd4859bd9b1e66daf9",
+    "integration/free5gc/pins.json": "dba17fe65859f5da46b74ad3bc49ce7026c60fe8e27b170f0887ddabfe6d8ebb",
+    "integration/free5gc/pcf.patch": "5eb9c96a06e128cfa605972d48f3eb7433dcbbf646d7d805b791de1851fb6076",
+    "integration/free5gc/smf.patch": "7a8b3496768993cc9aa779d089d5fad1e655ed4eccba665ce1e8350c685a28a1"
+  }
+}

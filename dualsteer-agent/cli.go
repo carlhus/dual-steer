@@ -12,6 +12,9 @@ import (
 
 // Run accepts --config before or after validate, status, or apply.
 func Run(args []string, out io.Writer, resolve InterfaceResolver) error {
+	if len(args) > 0 && args[0] == "serve" {
+		return runServe(args[1:], out)
+	}
 	configPath := "config.yaml"
 	command := ""
 	dryRun := false
@@ -20,7 +23,7 @@ func Run(args []string, out io.Writer, resolve InterfaceResolver) error {
 		arg := args[i]
 		switch {
 		case arg == "--help" || arg == "-h":
-			_, err := fmt.Fprintln(out, "usage: dualsteer-agent [--config config.yaml] [validate|status|apply|delete] [--dry-run] [--policy-map PATH|id:N --path-map PATH|id:N] (default: validate)")
+			_, err := fmt.Fprintln(out, "usage: dualsteer-agent [--config config.yaml] [validate|status|apply|delete] [--dry-run] [--policy-map PATH|id:N --path-map PATH|id:N] (default: validate); daemon: serve --listen unix:/run/dualsteer-agent.sock --policy-map PATH|id:N --path-map PATH|id:N")
 			return err
 		case arg == "--policy-map" || arg == "--path-map":
 			i++

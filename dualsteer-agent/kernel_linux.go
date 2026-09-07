@@ -103,3 +103,28 @@ func LockWriters() (func() error, error) {
 	}
 	return file.Close, nil
 }
+
+// RequireEmptyNamespace prevents the daemon from adopting or overwriting
+// manually installed policy state. It never deletes another writer's entries.
+func (m *KernelMaps) RequireEmptyNamespace(inode uint64) error {
+	var conn ConnKey
+	var policy MapPolicy
+	policies := m.policy.Iterate()
+	for policies.Next(&conn, &policy) {
+		if conn.NetNSInode == inode {
+			return fmt.Errorf("selected maps contain existing policy for token %d; restart requires empty namespace maps (recreate dedicated maps or explicitly delete old entries)", conn.Token)
+		}
+	}
+	if err := policies.Err(); err != nil {
+		return err
+	}
+	var key PathKey
+	var path MapPath
+	paths := m.path.Iterate()
+	for paths.Next(&key, &path) {
+		if key.Conn.NetNSInode == inode {
+			return fmt.Errorf("selected maps contain existing paths for token %d; restart requires empty namespace maps", key.Conn.Token)
+		}
+	}
+	return paths.Err()
+}

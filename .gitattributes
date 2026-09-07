@@ -1,2 +1,3 @@
-# Unified diff context has required leading spaces, including blank context lines.
+# Unified diff context lines intentionally contain a leading space before tabs.
+integration/free5gc/*.patch -whitespace
 bpf/*.patch -whitespace
