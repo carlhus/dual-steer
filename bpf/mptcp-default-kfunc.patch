@@ -1,0 +1,34 @@
+--- a/net/mptcp/bpf.c
++++ b/net/mptcp/bpf.c
+@@ -187,6 +187,23 @@
+ 	return data->contexts[pos];
+ }
+ 
++/* Call the same kernel selectors as sched.c's default scheduler. Returning
++ * an error from struct_ops alone does not request a default retry.
++ */
++__bpf_kfunc int bpf_mptcp_sched_default(struct mptcp_sock *msk,
++                                      struct mptcp_sched_data *data)
++{
++	struct sock *ssk;
++
++	ssk = data->reinject ? mptcp_subflow_get_retrans(msk) :
++			       mptcp_subflow_get_send(msk);
++	if (!ssk)
++		return -EINVAL;
++
++	mptcp_subflow_set_scheduled(mptcp_subflow_ctx(ssk), true);
++	return 0;
++}
++
+ __bpf_kfunc bool bpf_mptcp_subflow_queues_empty(struct sock *sk)
+ {
+ 	return tcp_rtx_queue_empty(sk);
+@@ -195,6 +212,7 @@
+ __diag_pop();
+ 
+ BTF_SET8_START(bpf_mptcp_sched_kfunc_ids)
++BTF_ID_FLAGS(func, bpf_mptcp_sched_default)
+ BTF_ID_FLAGS(func, mptcp_subflow_set_scheduled)
+ BTF_ID_FLAGS(func, bpf_mptcp_subflow_ctx_by_pos)
+ BTF_ID_FLAGS(func, mptcp_sched_load_balance_data_DL_set_contexts)

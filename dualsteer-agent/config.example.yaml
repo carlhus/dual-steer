@@ -1,0 +1,12 @@
+dualSteer:
+  enabled: true
+  generation: 1
+  mode: load-balance # or lowest-rtt
+  rttDeltaUs: 1000
+  legs:
+    A:
+      ifname: leg-a
+      weight: 70
+    B:
+      ifname: leg-b
+      weight: 30

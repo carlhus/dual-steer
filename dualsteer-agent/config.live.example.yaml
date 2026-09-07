@@ -1,0 +1,21 @@
+# Replace token and endpoint IDs with this connection's MPTCP PM event values.
+# Execute the agent inside the socket's network namespace.
+dualSteer:
+  enabled: true
+  generation: 1
+  mode: load-balance
+  rttDeltaUs: 1000
+  connection:
+    token: 123 # Placeholder local MPTCP token, NOT a port or interface index.
+    # netnsInode: 4026531992 # Optional; must equal current network namespace.
+  legs:
+    A:
+      ifname: leg-a
+      weight: 70
+      endpoints:
+        - {localId: 0, remoteId: 0}
+    B:
+      ifname: leg-b
+      weight: 30
+      endpoints:
+        - {localId: 1, remoteId: 1}

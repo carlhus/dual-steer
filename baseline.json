@@ -1,0 +1,15 @@
+{
+  "free5gc": {
+    "repository": "https://github.com/free5gc/free5gc",
+    "tag": "v4.2.3",
+    "commit": "3b34a08e93a9b334f0f4005d3a3a9f79b66d59b9",
+    "role": "future control-plane integration baseline; not built or modified by this PR"
+  },
+  "paper_implementation": {
+    "repository": "https://github.com/carlhus/atsss",
+    "commit": "f5ba78b1d898d12641e7412beb1f36a8ef0309dc",
+    "kernel_commit": "48826ae77cc9a10907e990f1077caedc90ea4cd3",
+    "kernel_makefile_version": "6.6-rc2",
+    "note": "Local supplied working trees are the implementation reference; tracked revisions alone do not describe existing working-tree changes."
+  }
+}

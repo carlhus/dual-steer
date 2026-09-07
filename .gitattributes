@@ -1,0 +1,2 @@
+# Unified diff context has required leading spaces, including blank context lines.
+bpf/*.patch -whitespace
