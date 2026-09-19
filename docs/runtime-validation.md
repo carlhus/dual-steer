@@ -65,4 +65,4 @@ BPF object  b37aaeb49b4ce0b67324dcd92e7c42d1231a1e8036a44c9f120d6a0849ea2115
 Go agent    b7bd41f69fda694fb0232b5da39596cf086ba2750375c5de930d8ffa2e4c8d4c
 ```
 
-自動 PM event watcher、實體雙 3GPP access 與 free5GC v4.2.3 控制平面整合仍屬後續範圍。現在的 agent 已提供實際 map 寫入與清理，由呼叫端供應從 PM events 取得的 connection/endpoint binding。
+以上為 PR1 的驗證範圍，當時由呼叫端供應 connection／endpoint binding。後續 PR2 已完成自動 PM event watcher 與 free5GC v4.2.3 PCF／SMF 研究介面串接，見 [控制面串接與驗收](controlplane-integration.md)。實體雙 3GPP access、正常 PDU session 整合與正式控制面程序仍未完成；最新狀態見 [進度總覽](progress-and-next-steps.md)。

@@ -1,5 +1,7 @@
 # DualSteer generic MPTCP legs
 
+目前進度、已驗證範圍與下一步請見 [進度總覽](docs/progress-and-next-steps.md)。
+
 本專案實作論文 MPTCP/eBPF scheduler 的 Leg A／Leg B 泛化：runtime policy、WRR、SRTT 與 Go agent 的實際 map 寫入。原本的 `bpf_rr_quota`／`bpf_rtt` 保留在來源專案，本專案新增 `bpf_ds_wrr`／`bpf_ds_rtt`。
 
 free5GC 整合版本固定為 **v4.2.3**。PR2 已加入隔離 PCF／SMF 研究模式與 agent PM event 自動綁定，見 [控制面串接與驗收](docs/controlplane-integration.md)。尚不包含 NAS、N3IWF、正式 PDU session 或完整 DualSteer signalling。
